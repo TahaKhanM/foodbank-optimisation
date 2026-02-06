@@ -17,22 +17,20 @@ The included `foodbank.py` constructs and solves this optimisation model using *
 
 ### 1) Linear (and integer) programming formulation
 
-Let there be \(n\) food items.
+Let there be $n$ food items.
 
-- Decision variables: \(x_i \in \mathbb{Z}_{\ge 0}\), the number of units of item \(i\) included in the parcel.
-- Cost: \(c_i\) (price per unit).
-- Nutrients: \(a_{k,i}\), amount of nutrient \(k\) per unit of item \(i\).
+- Decision variables: $x_i \in \mathbb{Z}_{\ge 0}$, the number of units of item $i$ included in the parcel.
+- Cost: $c_i$ (price per unit).
+- Nutrients: $a_{k,i}$, amount of nutrient $k$ per unit of item $i$.
 
 A basic cost-minimising model is:
-
-\[
+$$
 \begin{aligned}
 \min_{x \in \mathbb{Z}_{\ge 0}^n} \quad & \sum_{i=1}^n c_i x_i \\
 \text{s.t.} \quad & L_k \le \sum_{i=1}^n a_{k,i} x_i \le U_k, \quad \forall k \\
 \quad & x_i \in \mathbb{Z}_{\ge 0}.
 \end{aligned}
-\]
-
+$$
 This project extends that template in two main ways:
 
 - Some constraints are **ratio constraints** (e.g., fat calories as a fraction of total calories). These can be written as linear inequalities by moving terms to one side.
@@ -46,46 +44,39 @@ Below is the conceptual structure implemented in `foodbank.py`:
 
 #### Calories via Harris–Benedict BEE
 
-For weight \(w\) (kg), height \(h\) (cm), age \(a\) (years), and parcel length \(d\) (days), the minimum calorie requirement is built from the Harris–Benedict basal energy expenditure (BEE):
-
-\[
+For weight $w$ (kg), height $h$ (cm), age $a$ (years), and parcel length $d$ (days), the minimum calorie requirement is built from the Harris–Benedict basal energy expenditure (BEE):
+$$
 \text{BEE}_\text{male} = 66.5 + 13.8w + 5h - 6.8a
-\]
-\[
+$$
+$$
 \text{BEE}_\text{female} = 655.1 + 9.6w + 1.9h - 4.7a
-\]
-
+$$
 Then:
-
-\[
+$$
 C_{\min} = d \cdot \text{BEE}, \qquad
 C_{\max} = \alpha \cdot C_{\min}
-\]
-
-where \(\alpha\) is set to 1.2 (no frequent rigorous exercise) or 1.5 (frequent rigorous exercise).
+$$
+where $\alpha$ is set to 1.2 (no frequent rigorous exercise) or 1.5 (frequent rigorous exercise).
 
 #### Macronutrient ratio constraints
 
-Let total calories be \(\text{Cal} = \sum_i \text{cal}_i x_i\).
+Let total calories be $\text{Cal} = \sum_i \text{cal}_i x_i$.
 
-- Fat: fats contribute \(9\) kcal per gram, so
-  \[
+- Fat: fats contribute $9$ kcal per gram, so
+$$
   0.20\,\text{Cal} \le 9\sum_i \text{fat}_i x_i \le 0.35\,\text{Cal}.
-  \]
-
-- Carbohydrates: carbs contribute \(4\) kcal per gram, so
-  \[
+$$
+- Carbohydrates: carbs contribute $4$ kcal per gram, so
+$$
   0.45\,\text{Cal} \le 4\sum_i \text{carb}_i x_i \le 0.65\,\text{Cal}.
-  \]
-
+$$
 - Sugar cap:
-  \[
+$$
   4\sum_i \text{sugar}_i x_i \le 0.10\,\text{Cal}.
-  \]
-
+$$
 #### Minimums / ranges
 
-- Protein minimum scales with body mass and days (implemented as \(0.8\,w\,d\) grams).
+- Protein minimum scales with body mass and days (implemented as $0.8\,w\,d$ grams).
 - Fibre minimum scales with days.
 - Salt range scales with days.
 - Additional constraints enforce minimum fish intake and a “5-a-day” style fruit/veg requirement.
@@ -94,32 +85,26 @@ Let total calories be \(\text{Cal} = \sum_i \text{cal}_i x_i\).
 
 ### 3) 5-a-day and variety via binary variables
 
-Variety requirements are difficult to express using only \(x\)-variables, because “at least one item from category” is a logical condition.
+Variety requirements are difficult to express using only $x$-variables, because “at least one item from category” is a logical condition.
 
-Introduce binary variables \(y_c \in \{0,1\}\) for categories \(c\) (e.g., veg, fruit, pulses). Link them to item choices:
-
-\[
+Introduce binary variables $y_c \in \{0,1\}$ for categories $c$ (e.g., veg, fruit, pulses). Link them to item choices:
+$$
  y_c \le \sum_{i \in \mathcal{I}(c)} x_i \quad \forall c
-\]
-
+$$
 and require:
-
-\[
+$$
 \sum_c y_c \ge 5
-\]
-
-alongside a separate constraint ensuring total portions across eligible items is at least \(5d\).
+$$
+alongside a separate constraint ensuring total portions across eligible items is at least $5d$.
 
 ## Simplex (and what’s happening under the hood)
 
 ### LP geometry and simplex
 
-If we ignore integrality and treat \(x_i \ge 0\) as continuous, we obtain an LP:
-
-\[
+If we ignore integrality and treat $x_i \ge 0$ as continuous, we obtain an LP:
+$$
 \min\; c^\top x \;\;\text{s.t.}\; Ax \le b,\; x\ge 0.
-\]
-
+$$
 Geometrically, the feasible region is a convex polytope. The **simplex method** exploits the fact that an LP optimum (if it exists) occurs at a **vertex** (a *basic feasible solution*). Simplex moves from vertex to adjacent vertex by pivoting the basis, improving the objective until no improving adjacent move exists.
 
 ### Why MILP matters
@@ -195,13 +180,5 @@ See Tables/Figures in `Final_copy-3.pdf` for the full comparisons.
 - Packaging this as a simple web app/API could streamline real-world adoption.
 
 ## Citation
+The preprint can be found at: https://www.researchgate.net/publication/384667932_A_detailed_study_of_Food_Bank's_resource_allocation_and_optimisation_of_nutrition_using_linear_programming
 
-If you use this repository, please cite the included preprint:
-
-```bibtex
-@misc{foodbank_lp_preprint,
-  title        = {A detailed study of Food Bank's resource allocation and optimisation of nutrition using linear programming},
-  author       = {Barua, Shiv and Reiss Din, Koby and Khan, Taha and Wickham, Jack},
-  note         = {Preprint included as Final_copy-3.pdf in the repository}
-}
-```
