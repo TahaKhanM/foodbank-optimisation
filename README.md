@@ -126,7 +126,9 @@ So “simplex” still plays a role: it is often used repeatedly to solve the LP
 ### 1) Install dependencies
 
 ```bash
-pip install pulp pandas openpyxl
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 ### 2) Provide the food database
@@ -154,7 +156,7 @@ At the bottom of the script there is an example call for an “average” UK mal
 
 ## Results highlight (from the paper)
 
-Using observed parcel composition as a baseline, the preprint reports that optimised parcels can be **~53–55% cheaper** while meeting nutritional constraints, e.g. the median-male 9-day parcel comparison shows the optimised parcel cost dropping from ~£26.52 to ~£12.03 alongside improvements such as lower sugars and saturates and higher fibre.
+Using observed parcel composition as a baseline, the preprint reports that optimised parcels can be **about 53.5% cheaper on average** while meeting nutritional constraints, e.g. the median-male 9-day parcel comparison shows the optimised parcel cost dropping from about GBP 26.52 to about GBP 12.03 alongside improvements such as lower sugars and saturates and higher fibre.
 
 See Tables/Figures in `Final_copy-3.pdf` for the full comparisons.
 
@@ -175,10 +177,10 @@ See Tables/Figures in `Final_copy-3.pdf` for the full comparisons.
 
 ## Limitations and future work
 
+- The food database (`fb.xlsx`) is not included in this public repo, so the script is inspectable but not fully runnable until a compatible workbook is supplied.
 - Integrating **inventory constraints** explicitly (per-branch stock limits) would make the model more operationally realistic.
 - Extending dietary constraints to include **micronutrients** (iron, vitamin C, etc.) would improve health coverage.
 - Packaging this as a simple web app/API could streamline real-world adoption.
 
 ## Citation
 The preprint can be found at: https://www.researchgate.net/publication/384667932_A_detailed_study_of_Food_Bank's_resource_allocation_and_optimisation_of_nutrition_using_linear_programming
-
