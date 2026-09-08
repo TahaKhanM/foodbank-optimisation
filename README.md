@@ -1,10 +1,10 @@
 # Food-bank parcel optimisation
 
-A mixed-integer optimisation model for choosing affordable food parcels subject to nutrient, stock and variety constraints. The interesting part is translating a parcel into integer package quantities: calorie ratios remain linear, while category coverage needs binary variables. PuLP formulates the model and CBC searches for the least-cost feasible combination.
+A mixed-integer model that chooses the cheapest whole-package food parcel meeting supplied nutrient, stock and variety constraints. PuLP builds the model and CBC solves it. Tests compare the objective against exhaustive enumeration on a small catalogue.
 
-This began as a collaborative study of allocation at the Trussell Trust Woking food bank. The [original paper](Final_copy-3.pdf) is by **Shiv Barua, Koby Reiss Din, Taha Khan and Jack Wickham**, listed alphabetically. It reports a £26.52 observed parcel and a £12.03 optimised nine-day comparison. **The original `fb.xlsx` food catalogue is absent, so those results cannot be independently reproduced from this repository.** They are historical paper results, not results of the demonstration below. The paper and Git history do not establish each author's exact share of the code or fieldwork.
+The implementation supports CSV or Excel input, product exclusions, stock caps and parcel-wide bounds. It checks an optimal integer solution against the constraints before returning quantities. An infeasible model returns an explicit failure.
 
-The current implementation makes the optimisation inspectable and runnable with an explicitly synthetic catalogue. It accepts stock limits, exclusions and configurable parcel-wide bounds, checks inputs before solving and returns quantities only after checking an optimal integer solution against the constraints.
+The project began as a collaborative study at the Trussell Trust Woking food bank. The [paper](Final_copy-3.pdf) is by **Shiv Barua, Koby Reiss Din, Taha Khan and Jack Wickham**. Its historical £26.52 observed parcel and £12.03 optimised comparison depend on a missing source catalogue. The runnable example below uses synthetic data and does not reproduce those results.
 
 ## Run the model
 
@@ -45,10 +45,10 @@ For every nonempty category, a binary witness $y_c$ satisfies $y_c \leq \sum_{i\
 
 Tests compare the solver objective with an **independent exhaustive enumeration** of a small bounded catalogue. They also check the demonstration's nutrient ratios, category and portion coverage, stock limits, exclusions, infeasibility, malformed input and solver-name collisions. CI runs these checks and the example from a clean checkout.
 
-The 2026 revision replaces the original import-time script, unused `likes`/`dislikes` arguments, global DataFrame mutation and duplicated totals with explicit inputs and a testable solver boundary. [The original script](historical/original_foodbank.py) is retained unchanged for comparison with the paper; it still requires the missing spreadsheet. The historical hardcoded fish, salt, saturated-fat and “5-a-day” proxies have not been silently repackaged as validated nutrition policy.
+The later implementation separates input validation, model construction and solving. [The original script](historical/original_foodbank.py) remains available for comparison with the paper and requires the missing spreadsheet.
 
-## Scope and remaining work
+## Limits
 
-The solver establishes optimality **within the supplied model**. It does not establish that the policy is nutritionally appropriate, affordable in a current shop or operationally feasible for a food bank. The original report and code also disagree on some bounds, including protein and saturated fat; recovering the catalogue and reconciling those definitions is necessary before replicating the paper.
+The result is optimal for the supplied model. Real use needs verified package data and an agreed nutrition policy. The synthetic example is for software testing and does not provide dietary advice.
 
-There is no meal schedule, micronutrient model, spoilage, preparation cost, uncertainty analysis or allergy ontology. An exclusion is an exact product-name filter and cannot establish allergen safety. Positive prices guarantee a bounded cost objective but do not represent donated stock's opportunity cost. Actual deployment would need verified product units, an agreed nutrition policy, inventory integration and expert review of the resulting parcels. An LP relaxation would be useful as a lower-cost bound; it would not produce the same package-feasible decision.
+The model has no meal schedule, micronutrient coverage, spoilage or preparation costs. Product-name exclusions are exact filters and do not establish allergen safety. Reproducing the original study also requires recovering `fb.xlsx` and reconciling the paper's nutrient bounds with the historical script.
