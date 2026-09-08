@@ -1,0 +1,6 @@
+Item,Calories (kcal),Fat (g),Saturates (g),Carbohydrate (g),Sugars (g),Fibre (g),Protein (g),Salt (g),Price (£),Stock,Category,Portions
+Grain A,400,8,1,60,2,8,16,0.1,1.0,8,grain,0
+Pulse B,300,4,0.5,44,3,12,22,0.2,0.9,8,pulse,2
+Vegetable C,100,1,0.1,16,6,6,4,0.1,0.5,8,vegetable,3
+Fruit D,120,0.5,0.1,26,16,4,1,0.0,0.6,8,fruit,2
+Protein E,200,9,2,0,0,0,29,0.5,1.2,8,protein,0

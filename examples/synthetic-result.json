@@ -1,0 +1,19 @@
+{
+  "status": "Optimal",
+  "quantities": {
+    "Grain A": 2,
+    "Pulse B": 3,
+    "Protein E": 1
+  },
+  "totals": {
+    "Price (\u00a3)": 5.9,
+    "Calories (kcal)": 1900.0,
+    "Fat (g)": 37.0,
+    "Saturates (g)": 5.5,
+    "Carbohydrate (g)": 252.0,
+    "Sugars (g)": 13.0,
+    "Fibre (g)": 52.0,
+    "Protein (g)": 127.0,
+    "Salt (g)": 1.3
+  }
+}

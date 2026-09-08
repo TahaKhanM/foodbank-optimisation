@@ -1,252 +1,159 @@
-import numpy as np
-import sys
-import numpy as np
-import sys
-import pulp
+"""Cost-minimising integer food parcels with explicit, auditable constraints."""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from pathlib import Path
+
 import pandas as pd
-import os
+import pulp
 
-# Correct the file path to point to the correct Excel file in the same directory
-file_path = 'fb.xlsx'
-
-# Load the Excel file into a DataFrame
-xls = pd.ExcelFile(file_path)
-
-# Load the data from the first sheet into a DataFrame
-df_full = pd.read_excel(xls, sheet_name='Sheet1')
-
-# Strip any leading/trailing whitespace in the "Item" column
-df_full["Item"] = df_full["Item"].str.strip()
-
-# Extract data and save it in a DataFrame
-data = {
-    "Item": df_full["Item"].tolist(),
-    "Calories (kcal)": df_full["Calories (kcal)"].tolist(),
-    "Fat (g)": df_full["Fat (g)"].tolist(),
-    "Saturates (g)": df_full["Saturates (g)"].tolist(),
-    "Carbohydrate (g)": df_full["Carbohydrate (g)"].tolist(),
-    "Sugars (g)": df_full["Sugars (g)"].tolist(),
-    "Fibre (g)": df_full["Fibre (g)"].tolist(),
-    "Protein (g)": df_full["Protein (g)"].tolist(),
-    "Salt (g)": df_full["Salt (g)"].tolist(),
-    "Price (£)": df_full["Price (£)"].tolist()
-}
-
-# Create the DataFrame with the same structure
-df = pd.DataFrame(data)
-
-# Average Parcel Values
-avg_parcel = {
-    'Calories': 17230,
-    'Fat': 402,
-    'Saturates': 178,
-    'Carbohydrates': 2596,
-    'Sugars': 920,
-    'Fibre': 284,
-    'Protein': 622,
-    'Salt': 41,
-    'Price': 26.52
-}
+NUTRIENTS = ['Calories (kcal)', 'Fat (g)', 'Saturates (g)', 'Carbohydrate (g)',
+             'Sugars (g)', 'Fibre (g)', 'Protein (g)', 'Salt (g)']
 
 
-def calculate_deviation(parcel1, parcel2):
-    deviations = {}
-    for key in parcel1:
-        parcel1_value = parcel1[key]
-        parcel2_value = parcel2[key]
-        deviation = (parcel1_value - parcel2_value) / parcel2_value * 100
-        deviations[key] = deviation
-    return deviations
+def validate_catalogue(frame):
+    required = ['Item', 'Price (£)', *NUTRIENTS]
+    missing = set(required) - set(frame.columns)
+    if missing:
+        raise ValueError(f'missing catalogue columns: {sorted(missing)}')
+    if frame.empty:
+        raise ValueError('catalogue must contain at least one item')
+    frame = frame.copy().reset_index(drop=True)
+    if frame['Item'].isna().any():
+        raise ValueError('item names cannot be missing')
+    frame['Item'] = frame['Item'].astype(str).str.strip()
+    if frame['Item'].eq('').any() or frame['Item'].str.casefold().duplicated().any():
+        raise ValueError('item names must be nonempty and unique (ignoring case)')
+    for column in ['Price (£)', *NUTRIENTS, *[c for c in ['Stock', 'Portions'] if c in frame]]:
+        frame[column] = pd.to_numeric(frame[column], errors='raise')
+        if not all(math.isfinite(v) and v >= 0 for v in frame[column]):
+            raise ValueError(f'{column}: values must be finite and nonnegative')
+    if (frame['Price (£)'] <= 0).any():
+        raise ValueError('prices must be positive to keep the cost model well bounded')
+    if 'Stock' in frame and (frame['Stock'] % 1 != 0).any():
+        raise ValueError('stock must be whole units')
+    if 'Category' in frame:
+        frame['Category'] = frame['Category'].fillna('').astype(str).str.strip()
+    return frame
 
 
-def compare_parcel_to_average(variable_parcel):
-    # Calculate the percentage deviation between the variable parcel and the average parcel
-    deviations = calculate_deviation(variable_parcel, avg_parcel)
-
-    print("Comparison of Variable Parcel to Average Parcel:\n")
-    for key in avg_parcel:
-        deviation = deviations[key]
-        print(f"{key}:")
-        print(f"  Average Parcel Value: {avg_parcel[key]}")
-        print(f"  Variable Parcel Value: {variable_parcel[key]}")
-        print(f"  Deviation: {deviation:.2f}%\n")
-
-    return deviations
+def bounds(value, label, fraction=False):
+    if not isinstance(value, list) or len(value) != 2:
+        raise ValueError(f'{label}: expected [minimum, maximum], using null for an open bound')
+    lo, hi = value
+    for number in value:
+        if number is not None and (not isinstance(number, (int, float)) or not math.isfinite(number) or number < 0 or (fraction and number > 1)):
+            raise ValueError(f'{label}: invalid bound')
+    if lo is not None and hi is not None and lo > hi:
+        raise ValueError(f'{label}: minimum exceeds maximum')
+    return lo, hi
 
 
-def print_dict_with_spacing(input_dict):
-    for key, value in input_dict.items():
-        print(f"{key}: {value}")
-        print("-" * 20)
+def build_model(frame, policy, exclude=()):
+    frame = validate_catalogue(frame)
+    if not isinstance(policy, dict) or any(not isinstance(policy.get(key, {}), dict) for key in ['nutrients', 'energy_fractions']):
+        raise ValueError('policy and nutrient bounds must be JSON objects')
+    allowed = {'nutrients', 'energy_fractions', 'max_item_calorie_fraction', 'min_categories', 'min_portions'}
+    unknown = set(policy) - allowed
+    if unknown:
+        raise ValueError(f'unknown policy fields: {sorted(unknown)}')
+    excluded = {name.strip().casefold() for name in exclude}
+    if excluded - set(frame['Item'].str.casefold()):
+        raise ValueError('excluded item not found in catalogue')
+    problem = pulp.LpProblem('Food_Parcel', pulp.LpMinimize)
+    variables = [pulp.LpVariable(f'item_{i}', lowBound=0, cat='Integer') for i in frame.index]
+    for i, row in frame.iterrows():
+        if row['Item'].casefold() in excluded:
+            variables[i].upBound = 0
+        elif 'Stock' in frame:
+            variables[i].upBound = float(row['Stock'])
+    totals = {column: pulp.lpSum(float(frame.loc[i, column]) * variables[i] for i in frame.index)
+              for column in ['Price (£)', *NUTRIENTS]}
+    problem += totals['Price (£)']
+
+    def constrain(expression, pair, name, reference=1, fraction=False):
+        lo, hi = bounds(pair, name, fraction)
+        if lo is not None:
+            problem.addConstraint(expression >= lo * reference, name=f'{name}_min')
+        if hi is not None:
+            problem.addConstraint(expression <= hi * reference, name=f'{name}_max')
+
+    for index, (nutrient, pair) in enumerate(policy.get('nutrients', {}).items()):
+        if nutrient not in NUTRIENTS:
+            raise ValueError(f'unknown nutrient: {nutrient}')
+        constrain(totals[nutrient], pair, f'nutrient_{index}')
+    factors = {'Fat (g)': 9, 'Saturates (g)': 9, 'Carbohydrate (g)': 4, 'Sugars (g)': 4, 'Protein (g)': 4}
+    for index, (nutrient, pair) in enumerate(policy.get('energy_fractions', {}).items()):
+        if nutrient not in factors:
+            raise ValueError(f'no energy conversion for {nutrient}')
+        constrain(factors[nutrient] * totals[nutrient], pair, f'energy_{index}', totals['Calories (kcal)'], True)
+    if 'max_item_calorie_fraction' in policy:
+        cap = policy['max_item_calorie_fraction']
+        bounds([None, cap], 'max_item_calorie_fraction', True)
+        if cap is None or cap == 0:
+            raise ValueError('max_item_calorie_fraction must be in (0, 1]')
+        for i in frame.index:
+            problem += float(frame.loc[i, 'Calories (kcal)']) * variables[i] <= cap * totals['Calories (kcal)'], f'concentration_{i}'
+    if 'min_categories' in policy:
+        minimum = policy['min_categories']
+        if not isinstance(minimum, int) or minimum < 0 or 'Category' not in frame:
+            raise ValueError('min_categories requires a nonnegative integer and a Category column')
+        indicators = []
+        for index, category in enumerate(sorted(set(frame['Category']) - {''})):
+            indicator = pulp.LpVariable(f'category_{index}', cat='Binary')
+            indices = frame.index[frame['Category'] == category]
+            problem += indicator <= pulp.lpSum(variables[i] for i in indices), f'category_present_{index}'
+            indicators.append(indicator)
+        problem += pulp.lpSum(indicators) >= minimum, 'category_count'
+    if 'min_portions' in policy:
+        minimum = policy['min_portions']
+        bounds([minimum, None], 'min_portions')
+        if minimum is None or 'Portions' not in frame:
+            raise ValueError('min_portions requires a numeric minimum and a Portions column')
+        problem += pulp.lpSum(float(frame.loc[i, 'Portions']) * variables[i] for i in frame.index) >= minimum, 'portions'
+    return problem, variables, frame
 
 
-def simplex_algorithm(weight, exercise, height, age, likes, dislikes, gender, day):
-    # Clean the food item names by making them lowercase and removing weights
-    df["Item"] = df["Item"].str.lower().str.replace(r'\d+g|\d+ml', '', regex=True).str.strip()
-
-    # Create the problem variable
-    prob = pulp.LpProblem("Food_Parcel_Optimization", pulp.LpMinimize)
-
-    # Decision variables for the amount of each food item in the food parcel
-    food_vars = {item: pulp.LpVariable(f"Food_{item}", lowBound=0, cat="Integer") for item in df["Item"]}
-
-    # Objective function: minimize total cost (original price calculation)
-    prob += pulp.lpSum([df.loc[i, "Price (£)"] * food_vars[df.loc[i, "Item"]] for i in df.index])
-
-    # Nutritional constraints
-    total_calories = pulp.lpSum([df.loc[i, "Calories (kcal)"] * food_vars[df.loc[i, "Item"]] for i in df.index])
-
-    if gender == 'M':
-        calorie_min = day * (66.5 + 13.8 * weight + 5 * height - 6.8 * age)
-    elif gender == 'F':
-        calorie_min = day * (655.1 + 9.6 * weight + 1.9 * height - 4.7 * age)
-    else:
-        calorie_min = day * (66.5 + 13.8 * weight + 5 * height - 6.8 * age)
-
-    if exercise:
-        calorie_max = 1.5 * calorie_min
-    else:
-        calorie_max = 1.2 * calorie_min
-
-    prob += total_calories >= calorie_min
-    prob += total_calories <= calorie_max
-
-    total_fat = pulp.lpSum([df.loc[i, "Fat (g)"] * food_vars[df.loc[i, "Item"]] for i in df.index])
-    calories_from_fat = total_fat * 9
-    prob += calories_from_fat >= 0.20 * total_calories
-    prob += calories_from_fat <= 0.35 * total_calories
-
-    total_saturates = pulp.lpSum([df.loc[i, "Saturates (g)"] * food_vars[df.loc[i, "Item"]] for i in df.index])
-    prob += total_saturates <= 30 * day
-    prob += total_saturates >= 13 * day
-
-    total_carbs = pulp.lpSum([df.loc[i, "Carbohydrate (g)"] * food_vars[df.loc[i, "Item"]] for i in df.index])
-    prob += total_carbs >= 0.45 * total_calories / 4
-    prob += total_carbs <= 0.65 * total_calories / 4
-
-    total_sugar_calories = pulp.lpSum([df.loc[i, "Sugars (g)"] * 4 * food_vars[df.loc[i, "Item"]] for i in df.index])
-    prob += total_sugar_calories <= 0.10 * total_calories
-
-    total_fibre = pulp.lpSum([df.loc[i, "Fibre (g)"] * food_vars[df.loc[i, "Item"]] for i in df.index])
-    prob += total_fibre >= 30 * day
-
-    total_protein = pulp.lpSum([df.loc[i, "Protein (g)"] * food_vars[df.loc[i, "Item"]] for i in df.index])
-    protein_min = 0.8 * weight * day
-    prob += total_protein >= protein_min
-
-    total_salt = pulp.lpSum([df.loc[i, "Salt (g)"] * food_vars[df.loc[i, "Item"]] for i in df.index])
-    prob += total_salt <= 6 * day
-    prob += total_salt >= 1.3 * day
-
-    # Define fish constraints
-    fish_items = ["tinned fish"]
-    fish_weight_per_tin = 120
-    desired_fish_weight = 40 * day
-    total_fish_weight = pulp.lpSum([food_vars.get(fish, 0) * fish_weight_per_tin for fish in fish_items])
-    prob += total_fish_weight >= desired_fish_weight
-
-    # 5-a-Day categories and items
-    portion_sizes = {
-        "squash": 150, "tinned vegetables": 80, "tinned fruit can": 80, "tinned tomatoes": 80,
-        "beans": 80, "lentils": 80, "pulses": 80, "chickpeas": 80, "raisins": 30,
-        "soup": 80, "pasta sauce": 80, "potatoes: mashed": 80, "potatoes: tinned": 80
-    }
-
-    unit_weights = {
-        "squash": 1000, "tinned vegetables": 300, "tinned fruit can": 300, "tinned tomatoes": 400,
-        "beans": 420, "lentils": 500, "pulses": 500, "chickpeas": 400, "raisins": 500,
-        "soup": 400, "pasta sauce": 500, "potatoes: mashed": 425, "potatoes: tinned": 345
-    }
-
-    five_a_day_items = [
-        "tinned tomatoes", "pasta sauce", "soup", "tinned vegetables", "potatoes: mashed",
-        "potatoes: tinned", "raisins", "squash", "beans", "lentils", "pulses", "chickpeas",
-        "tinned fruit can"
-    ]
-
-    category_map = {
-        "tomato": ["tinned tomatoes", "pasta sauce", "soup"],
-        "veg": ["tinned vegetables"],
-        "potato": ["potatoes: mashed", "potatoes: tinned"],
-        "dried_fruit": ["raisins"],
-        "juice": ["squash"],
-        "beans_pulses": ["beans", "lentils", "pulses", "chickpeas"],
-        "fruit": ["tinned fruit can"]
-    }
-
-    # Binary variables for categories
-    category_vars = {category: pulp.LpVariable(f"Category_{category}", 0, 1, cat="Binary") for category in category_map}
-
-    total_five_a_day_portions = pulp.lpSum([
-        food_vars.get(item, 0) * unit_weights[item] / portion_sizes[item] for item in five_a_day_items
-    ])
-    prob += total_five_a_day_portions >= 5 * day
-
-    for category, items in category_map.items():
-        prob += category_vars[category] <= pulp.lpSum([food_vars.get(item, 0) for item in items])
-
-    prob += pulp.lpSum([category_vars[cat] for cat in category_vars]) >= 5
-
-    if "pasta" in df["Item"].values and "pasta sauce" in df["Item"].values:
-        prob += food_vars["pasta sauce"] <= food_vars["pasta"]
-
-    for i in df.index:
-        item = df.loc[i, "Item"]
-        prob += (df.loc[i, "Calories (kcal)"] * food_vars[item]) <= 0.20 * total_calories
-
-    # Solve the problem
-    prob.solve()
-
-    variable_parcel = {
-        'Calories': 0,
-        'Fat': 0,
-        'Saturates': 0,
-        'Carbohydrates': 0,
-        'Sugars': 0,
-        'Fibre': 0,
-        'Protein': 0,
-        'Salt': 0,
-        'Price': 0
-    }
-
-    if pulp.LpStatus[prob.status] == 'Optimal':
-        for i in df.index:
-            item = df.loc[i, "Item"]
-            qty = food_vars[item].varValue if item in food_vars else 0
-            if qty and qty > 0:
-                variable_parcel['Calories'] += df.loc[i, "Calories (kcal)"] * qty
-                variable_parcel['Fat'] += df.loc[i, "Fat (g)"] * qty
-                variable_parcel['Saturates'] += df.loc[i, "Saturates (g)"] * qty
-                variable_parcel['Carbohydrates'] += df.loc[i, "Carbohydrate (g)"] * qty
-                variable_parcel['Sugars'] += df.loc[i, "Sugars (g)"] * qty
-                variable_parcel['Fibre'] += df.loc[i, "Fibre (g)"] * qty
-                variable_parcel['Protein'] += df.loc[i, "Protein (g)"] * qty
-                variable_parcel['Salt'] += df.loc[i, "Salt (g)"] * qty
-                variable_parcel['Price'] += df.loc[i, "Price (£)"] * qty
-    else:
-        print("No optimal solution found.")
-
-    total_nutrients = {nutrient: 0 for nutrient in ['Calories (kcal)', 'Fat (g)', 'Saturates (g)', 'Carbohydrate (g)', 'Sugars (g)', 'Fibre (g)', 'Protein (g)', 'Salt (g)']}
-
-    print("\nStatus:", pulp.LpStatus[prob.status])
-
-    if pulp.LpStatus[prob.status] == 'Optimal':
-        for i in df.index:
-            item = df.loc[i, "Item"]
-            qty = food_vars[item].varValue if item in food_vars else 0
-            if qty and qty > 0:
-                print(f"{item}:  {qty:.2f} units ")
-    else:
-        print("No optimal solution found.")
-
-    print("\n")
-
-    print_dict_with_spacing(variable_parcel)
-
-    return variable_parcel, prob, food_vars, total_nutrients
+def solve_parcel(frame, policy, exclude=(), solver=None):
+    problem, variables, frame = build_model(frame, policy, exclude)
+    problem.solve(solver or pulp.PULP_CBC_CMD(msg=False))
+    status = pulp.LpStatus[problem.status]
+    if status != 'Optimal' or problem.sol_status != pulp.LpSolutionOptimal:
+        return {'status': status, 'quantities': None, 'totals': None}
+    quantities = [int(round(variable.value())) for variable in variables]
+    for variable, quantity in zip(variables, quantities):
+        if abs(variable.value() - quantity) > 1e-5:
+            raise RuntimeError('solver returned a non-integer quantity')
+        variable.varValue = quantity
+    # Recheck the rounded solution; never publish an infeasible parcel as a result.
+    if not problem.valid(1e-5):
+        raise RuntimeError('solver solution failed constraint validation')
+    return {'status': status,
+            'quantities': {frame.loc[i, 'Item']: q for i, q in enumerate(quantities) if q},
+            'totals': {c: sum(float(frame.loc[i, c]) * q for i, q in enumerate(quantities)) for c in ['Price (£)', *NUTRIENTS]}}
 
 
-# Running for an average male in the UK
-variable_parcel, prob, food_vars, total_nutrients = simplex_algorithm(84.5, False, 177.9, 40.7, likes=[], dislikes=[], gender='M', day=9)
-# Run comparison
-compare_parcel_to_average(variable_parcel)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    examples = Path(__file__).parent / 'examples'
+    parser.add_argument('--catalogue', type=Path, default=examples / 'synthetic-foods.csv')
+    parser.add_argument('--policy', type=Path, default=examples / 'synthetic-policy.json')
+    parser.add_argument('--exclude', action='append', default=[], help='exact item name; may be repeated')
+    parser.add_argument('--output', type=Path)
+    args = parser.parse_args()
+    try:
+        frame = pd.read_excel(args.catalogue) if args.catalogue.suffix.lower() == '.xlsx' else pd.read_csv(args.catalogue)
+        result = solve_parcel(frame, json.loads(args.policy.read_text()), args.exclude)
+    except (ValueError, OSError, pulp.PulpSolverError) as error:
+        parser.exit(2, f'error: {error}\n')
+    output = json.dumps(result, indent=2) + '\n'
+    print(output, end='')
+    if args.output:
+        args.output.write_text(output)
+    return 0 if result['status'] == 'Optimal' else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
