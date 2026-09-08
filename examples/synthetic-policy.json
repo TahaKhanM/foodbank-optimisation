@@ -1,0 +1,12 @@
+{
+  "nutrients": {
+    "Calories (kcal)": [1800, 2200],
+    "Protein (g)": [70, null],
+    "Fibre (g)": [30, null],
+    "Salt (g)": [null, 6]
+  },
+  "energy_fractions": {"Fat (g)": [0.15, 0.35]},
+  "max_item_calorie_fraction": 0.5,
+  "min_categories": 3,
+  "min_portions": 5
+}
