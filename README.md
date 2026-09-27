@@ -1,5 +1,7 @@
 # Food-bank parcel optimisation
 
+[![tests](https://github.com/TahaKhanM/foodbank-optimisation/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/TahaKhanM/foodbank-optimisation/actions/workflows/tests.yml)
+
 A mixed-integer model that chooses the cheapest whole-package food parcel meeting supplied nutrient, stock and variety constraints. PuLP builds the model and CBC solves it. Tests compare the objective against exhaustive enumeration on a small catalogue.
 
 The implementation supports CSV or Excel input, product exclusions, stock caps and parcel-wide bounds. It checks an optimal integer solution against the constraints before returning quantities. An infeasible model returns an explicit failure.
